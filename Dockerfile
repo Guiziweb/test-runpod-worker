@@ -27,9 +27,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copier le handler
 COPY handler.py .
 
-# Copier les fichiers de test (optionnel, utile pour debug)
-COPY test_input.json* ./
-
 # Healthcheck pour vérifier que le container est prêt
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import runpod; print('OK')" || exit 1

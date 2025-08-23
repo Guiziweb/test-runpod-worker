@@ -101,7 +101,6 @@ def handler(job):
         }
     }
     
-    
     print(f"\n Génération terminée avec succès!")
     print(f"URL de la vidéo: {video_url}")
     print(f"Thumbnail: {thumbnail_url}")
