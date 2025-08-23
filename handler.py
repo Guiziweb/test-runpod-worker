@@ -5,11 +5,9 @@ Simule la génération de vidéo sans GPU pour tester l'intégration
 """
 
 import runpod
-import time
-import json
-import base64
+from runpod.serverless.utils.rp_validator import validate
 import uuid
-from datetime import datetime
+import time  # Pour timestamp dans l'ID
 
 
 def handler(job):
@@ -19,92 +17,45 @@ def handler(job):
     """
     print(f"🎬 Job reçu: {job.get('id', 'local-test')}")
     
-    # Récupérer les paramètres d'entrée
+    # Définir le schéma de validation
+    schema = {
+        "prompt": {
+            "type": str,
+            "required": True,
+            "constraints": lambda x: len(x.strip()) > 0 and len(x) <= 500  # Non vide et max 500 caractères
+        }
+    }
+    
+    # Valider l'input
     job_input = job.get('input', {})
-    prompt = job_input.get('prompt', 'Test vidéo par défaut')
-    duration = job_input.get('duration', 5)
-    style = job_input.get('style', 'default')
-    resolution = job_input.get('resolution', '1280x720')
-    fps = job_input.get('fps', 24)
+    validated_input = validate(job_input, schema)
     
-    print(f" Prompt: {prompt}")
-    print(f"️  Durée demandée: {duration}s")
-    print(f" Style: {style}")
-    print(f" Résolution: {resolution}")
-    print(f"️  FPS: {fps}")
-    
-    # Validation des paramètres
-    if duration < 1 or duration > 60:
+    # Vérifier les erreurs de validation
+    if "errors" in validated_input:
         return {
-            "error": "La durée doit être entre 1 et 60 secondes",
+            "error": f"Validation failed: {validated_input['errors']}",
             "status": "failed"
         }
     
-    # Simuler le temps de génération (1-2 sec par seconde de vidéo)
-    processing_time = duration * 1.5
-    print(f"\n⚙️  Simulation de génération vidéo...")
-    print(f"   Temps estimé: {processing_time:.1f} secondes")
+    # Récupérer le prompt validé
+    prompt = validated_input["validated_input"]["prompt"]
     
-    # Simulation avec progress updates
-    steps = min(10, int(processing_time))
-    for i in range(steps):
-        time.sleep(processing_time / steps)
-        progress = int((i + 1) / steps * 100)
-        print(f"   Progress: {progress}%")
+    print(f"📝 Prompt: {prompt}")
     
     # Générer un ID unique pour la vidéo
     video_id = f"test_{uuid.uuid4().hex[:8]}_{int(time.time())}"
     
     # Simuler une URL de stockage (comme si c'était uploadé)
     video_url = f"https://storage.runpod.io/test-videos/{video_id}.mp4"
-    thumbnail_url = f"https://storage.runpod.io/test-videos/{video_id}_thumb.jpg"
     
-    # Créer des données de test (simuler une mini vidéo)
-    fake_video_header = b"FAKE_MP4_HEADER"
-    fake_video_content = f"VIDEO[prompt:{prompt}|duration:{duration}s|style:{style}]".encode()
-    fake_video_data = fake_video_header + fake_video_content
-    
-    # Calculer des métadonnées réalistes
-    width, height = map(int, resolution.split('x'))
-    estimated_bitrate = 5000  # kbps
-    estimated_size = (estimated_bitrate * duration * 1000) // 8  # bytes
-    
-    # Résultat complet comme un vrai provider
+    # Résultat simplifié - juste l'essentiel pour le test
     result = {
-        "success": True,
         "video_url": video_url,
-        "thumbnail_url": thumbnail_url,
-        "video_id": video_id,
-        "details": {
-            "prompt": prompt,
-            "duration": duration,
-            "style": style,
-            "resolution": resolution,
-            "fps": fps,
-            "format": "mp4",
-            "codec": "h264"
-        },
-        "metadata": {
-            "generated_at": datetime.now().isoformat(),
-            "processing_time_seconds": processing_time,
-            "model": "test-model-v1.0",
-            "provider": "runpod-test",
-            "width": width,
-            "height": height,
-            "size_bytes": estimated_size,
-            "bitrate_kbps": estimated_bitrate
-        },
-        "cost": {
-            "tokens_used": duration * 1000,  # Simuler un coût en tokens
-            "credits_used": duration * 0.1,  # Simuler des crédits
-            "estimated_usd": duration * 0.001  # Coût simulé très bas
-        }
+        "prompt": prompt
     }
     
     print(f"\n Génération terminée avec succès!")
     print(f"URL de la vidéo: {video_url}")
-    print(f"Thumbnail: {thumbnail_url}")
-    print(f"Coût simulé: {result['cost']['tokens_used']} tokens")
     
     return result
 
