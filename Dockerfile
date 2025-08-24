@@ -1,35 +1,52 @@
-# Dockerfile pour Test RunPod Worker
-# Pas de GPU nécessaire pour ce worker de test
+# Use RunPod's PyTorch base image with CUDA support
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
-FROM python:3.11-slim
-
-# Métadonnées
-LABEL maintainer="VideoAI Studio"
-LABEL description="Test RunPod Worker pour génération vidéo simulée"
-
-# Définir le répertoire de travail
+# Set working directory
 WORKDIR /app
 
-# Variables d'environnement
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    RUNPOD_DEBUG_LEVEL=INFO
-
-# Installer les dépendances système minimales
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
     curl \
+    unzip \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copier et installer les dépendances Python
-COPY requirements.txt .
+# Install Python dependencies for RunPod
+RUN pip install --no-cache-dir runpod
+
+# Clone WAN 2.1 repository
+RUN git clone https://github.com/Wan-Video/Wan2.1.git /app/Wan2.1
+
+# Set WAN working directory
+WORKDIR /app/Wan2.1
+
+# Install WAN 2.1 requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copier le handler
-COPY handler.py .
+# Install additional dependencies for model download
+RUN pip install --no-cache-dir "huggingface_hub[cli]"
 
-# Healthcheck pour vérifier que le container est prêt
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import runpod; print('OK')" || exit 1
+# Download WAN 2.1 T2V-1.3B model (this will take a while but happens at build time)
+RUN huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir ./Wan2.1-T2V-1.3B
 
-# Commande de démarrage
-CMD ["python", "-u", "handler.py"]
+# Copy our custom handler
+COPY handler.py /app/handler.py
+COPY requirements.txt /app/requirements.txt
+
+# Install any additional requirements for our handler
+WORKDIR /app
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Set environment variables
+ENV PYTHONPATH="/app:/app/Wan2.1"
+ENV MODEL_PATH="/app/Wan2.1/Wan2.1-T2V-1.3B"
+ENV TORCH_DTYPE="float16"
+ENV CUDA_VISIBLE_DEVICES="0"
+
+# Expose port for RunPod
+EXPOSE 8080
+
+# Start the RunPod handler
+CMD ["python", "/app/handler.py"]
