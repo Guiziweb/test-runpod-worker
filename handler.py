@@ -30,22 +30,26 @@ def generate_video_with_wan(prompt: str, output_path: str) -> bool:
         bool: True if generation successful, False otherwise
     """
     try:
+        # Validate prompt is a string before using it
+        if not isinstance(prompt, str):
+            raise ValueError(f"Prompt must be a string, got {type(prompt)}")
+            
         # Prepare WAN 2.1 command
         cmd = [
             "python", "/app/Wan2.1/generate.py",
             "--task", "t2v-1.3B",
             "--size", "832*480",
             "--ckpt_dir", "/app/Wan2.1/Wan2.1-T2V-1.3B",
-            "--offload_model", "True",
+            "--offload_model",
             "--t5_cpu",
             "--sample_shift", "8", 
             "--sample_guide_scale", "6",
-            "--prompt", prompt,
+            "--prompt", str(prompt),  # Ensure it's a string
             "--output_dir", os.path.dirname(output_path)
         ]
         
         print(f"Executing WAN 2.1 generation with prompt: {prompt}")
-        print(f"Command: {' '.join(cmd)}")
+        print(f"Command: {' '.join(str(arg) for arg in cmd)}")  # Convert all to string for join
         
         # Execute WAN generation
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # 10 min timeout
@@ -80,25 +84,21 @@ def generate_video_with_wan(prompt: str, output_path: str) -> bool:
         print(f"Error during WAN 2.1 generation: {str(e)}")
         return False
 
-def upload_to_storage(video_path: str) -> str:
+def encode_video_base64(video_path: str) -> str:
     """
-    Upload video to storage and return public URL
-    For now, we'll simulate this with a temporary URL
-    In production, you'd upload to S3, GCS, or similar
+    Encode video as base64 for direct return
     """
-    # Generate unique filename
-    video_id = f"wan_{uuid.uuid4().hex[:8]}_{int(time.time())}"
+    import base64
     
-    # For now, return a mock URL - in production you'd upload to real storage
-    # Example S3 upload:
-    # import boto3
-    # s3 = boto3.client('s3')
-    # bucket = 'your-video-bucket'
-    # key = f'videos/{video_id}.mp4'
-    # s3.upload_file(video_path, bucket, key)
-    # return f'https://{bucket}.s3.amazonaws.com/{key}'
+    with open(video_path, 'rb') as f:
+        video_data = f.read()
     
-    return f"https://storage.runpod.io/wan-videos/{video_id}.mp4"
+    # Encode to base64
+    base64_data = base64.b64encode(video_data).decode('utf-8')
+    
+    print(f"Video size: {len(video_data)} bytes, base64 size: {len(base64_data)} bytes")
+    
+    return f"data:video/mp4;base64,{base64_data}"
 
 def handler(job):
     """
@@ -108,23 +108,34 @@ def handler(job):
     
     # Get input from job
     job_input = job.get("input", {})
+    print(f"Received job input: {job_input}")
     
-    # Validate input
-    schema = {
-        "prompt": {
-            "type": str,
-            "required": True,
-            "constraints": lambda x: len(x.strip()) > 0 and len(x) <= 500
-        }
-    }
+    # Simple validation - RunPod's validate might not work as expected
+    prompt = job_input.get("prompt")
     
-    try:
-        validated_input = validate(job_input, schema)
-        prompt = validated_input.get("prompt")
-    except Exception as e:
-        return {"error": f"Input validation failed: {str(e)}"}
+    # Check if prompt exists and is valid
+    if not prompt:
+        error_msg = "Missing required field: prompt"
+        print(f"Error: {error_msg}")
+        return {"error": error_msg}
     
-    print(f"Generating video for prompt: {prompt}")
+    if not isinstance(prompt, str):
+        error_msg = f"Prompt must be a string, got {type(prompt).__name__}"
+        print(f"Error: {error_msg}")
+        return {"error": error_msg}
+    
+    prompt = prompt.strip()
+    if len(prompt) == 0:
+        error_msg = "Prompt cannot be empty"
+        print(f"Error: {error_msg}")
+        return {"error": error_msg}
+    
+    if len(prompt) > 500:
+        error_msg = "Prompt too long (max 500 characters)"
+        print(f"Error: {error_msg}")
+        return {"error": error_msg}
+    
+    print(f"Validated prompt: {prompt}")
     
     # Create temporary directory for generation
     temp_dir = f"/tmp/wan_generation_{uuid.uuid4().hex[:8]}"
@@ -144,15 +155,24 @@ def handler(job):
         if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
             return {"error": "Generated video file is missing or empty"}
         
-        # Upload to storage
-        video_url = upload_to_storage(video_path)
+        # For RunPod, it's better to upload to their storage
+        # But for now, we'll use base64 with size check
+        video_size = os.path.getsize(video_path)
+        print(f"Generated video size: {video_size} bytes")
+        
+        # RunPod has response size limits, check if video is too large
+        if video_size > 50 * 1024 * 1024:  # 50MB limit
+            return {"error": f"Video too large ({video_size} bytes). Max 50MB for base64 response."}
+        
+        # Encode video as base64
+        video_url = encode_video_base64(video_path)
         
         # Clean up temporary files
         try:
             os.remove(video_path)
             os.rmdir(temp_dir)
-        except:
-            pass  # Don't fail if cleanup fails
+        except Exception as e:
+            print(f"Cleanup warning: {e}")
         
         # Return success response
         return {
@@ -160,7 +180,8 @@ def handler(job):
             "prompt": prompt,
             "model": "wan-2.1-t2v-1.3b",
             "resolution": "832x480",
-            "duration_seconds": 5
+            "duration_seconds": 5,
+            "size_bytes": video_size
         }
         
     except Exception as e:
